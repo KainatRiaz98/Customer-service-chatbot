@@ -1,3 +1,4 @@
+# Import necessary libraries
 import os
 from pathlib import Path
 
@@ -16,9 +17,11 @@ from langchain.vectorstores import Chroma
 import gradio as gr
 import time
 from transformers import AutoTokenizer, GenerationConfig, TextStreamer, pipeline
+# Defining directory for storing questions
 questions_dir=Path("Microsoft_QA")
 questions_dir.mkdir(exist_ok=True, parents=True)
 
+# Define function for writing question and answer to file
 def write_file(question, answer, file_path):
     text = f"""
     Q: {question}
@@ -237,22 +240,26 @@ write_file(
     answer="""Microsoft Q&A doesn't move or store customer data out of the region it's deployed in.""".strip(),
     file_path="question_40.txt",
 )
+# Define model and tokenizer names
 model_name = "TheBloke/Nous-Hermes-13B-GPTQ"
 model_basename = "nous-hermes-13b-GPTQ-4bit-128g.no-act.order"
+# Load tokenizer from model name
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast= True)
-
+# Load quantized model from model name and basename
 model = AutoGPTQForCausalLM.from_quantized(
     model_name,
     model_basename= model_basename,
     use_safetensors=True,
     Trust_remote_code=True,
 )
-
+# Load generation configuration from model name
 generation_config = GenerationConfig.from_pretrained(model_name)
+# Create TextStreamer object with specified tokenizer and settings
 streamer = TextStreamer(
     tokenizer, skip_prompt = True, skip_special_tokens=True, use_multiprocessing = False
 )
+# Create text generation pipeline with specified model, tokenizer, and generation parameters
 pipe = pipeline(
     "text-generation",
     model=model,
@@ -266,17 +273,23 @@ pipe = pipeline(
     batch_size=1,
 
 )
+# Create huggingfacepipeline object with specified pipeline
 llm=HuggingFacePipeline(pipeline=pipe)
+# Create HuggingFaceEmbeddings object with specified model name
 embeddings = HuggingFaceEmbeddings(
     model_name= 'embaas/sentence-transformers-multilingual-e5-base'
 
 )
+# Load documents from directory using DirectoryLoader class
 loader = DirectoryLoader("./Microsoft_QA/", glob="**/*txt")
 documents = loader.load()
-len(documents)
+
+# Split documents into chunks using CharacterTextSplitter class
 text_splitter = CharacterTextSplitter(chunk_size=512, chunk_overlap=0)
 texts = text_splitter.split_documents(documents)
+# Create Chroma database from documents and embeddings
 db = Chroma.from_documents(texts, embeddings)
+# Define prompt template for generating responses
 template = """
 ### Instruction: You're a microsoft QA platform support agent who is talking to user giving them information about the platform. Use only the chat history and the following information
 {context}
@@ -288,9 +301,10 @@ Keep your replies short, compassionate and informative.
 ### Responses:
 """.strip()
 prompt = PromptTemplate(input_variables=["context","question","chat_history"], template=template)
-
+# Create ConversationBufferMemory object to store chat history
 
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+# Create ConversationalRetrievalChain object from LLM, database retriever, memory, and prompt
 qa = ConversationalRetrievalChain.from_llm(
      llm,
      db.as_retriever(),
@@ -302,15 +316,15 @@ qa = ConversationalRetrievalChain.from_llm(
 
 import gradio as gr
 import time
-
+# Create Gradio user interface with Chatbot and Textbox components and ClearButton for clearing input/output
 with gr.Blocks() as demo:
     chatbot = gr.Chatbot()
     msg = gr.Textbox()
     clear = gr.ClearButton([msg, chatbot])
-
+# Define function for handling user input and updating chat history
     def user(user_message, history):
         return gr.update(value="", interactive=False), history + [[user_message, None]]
-
+# Define function for generating bot response using ConversationalRetrievalChain object and updating chat history
     def bot(history):
         response = qa(history[-1][0])
         response = response['answer']
@@ -320,10 +334,12 @@ with gr.Blocks() as demo:
             history[-1][1] += character
             time.sleep(0.05)
             yield history
-
+    # Submit user input to user function and update chat history, then generate bot response using bot function and update chat history
     response = msg.submit(user, [msg, chatbot], [msg, chatbot], queue=False).then(
         bot, chatbot, chatbot
     )
+     # Update Gradio interface to be interactive after bot response is generated
     response.then(lambda: gr.update(interactive=True), None, [msg], queue=False)
+    # Launch Gradio interface with sharing enabled
     demo.queue()
-    demo.launch()
+    demo.launch(share=True)
